@@ -81,7 +81,7 @@ export default function HistoryScreen() {
   const handleClearAllData = () => {
     Alert.alert(
       "Clear All Data",
-      "Are you sure you want to clear all medication data? This action cannot be undone.",
+      "Are you sure you want to clear all medication data? This action is irreversible.",
       [
         {
           text: "Cancel",
@@ -94,7 +94,7 @@ export default function HistoryScreen() {
             try {
               await clearAllData();
               await loadHistory();
-              Alert.alert("Success", "All data has been cleared successfully");
+              Alert.alert("Success", "All data has been cleared ");
             } catch (error) {
               console.error("Error clearing data:", error);
               Alert.alert("Error", "Failed to clear data. Please try again.");

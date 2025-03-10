@@ -15,18 +15,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { Link, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Circle } from "react-native-svg";
-import {
-  getMedications,
-  Medication,
-  getTodaysDoses,
-  recordDose,
-  DoseHistory,
-} from "../utils/storage";
 import { useFocusEffect } from "@react-navigation/native";
-import {
-  registerForPushNotificationsAsync,
-  scheduleMedicationReminder,
-} from "../utils/notifications";
+import { registerForPushNotificationsAsync, listAllScheduledNotifications } from "../utils/notifications";
+import { useMedicationStore } from "../utils/stores/medicationStore";
+import { useDoseHistoryStore } from "../utils/stores/doseHistoryStore";
 
 const { width } = Dimensions.get("window");
 
@@ -133,120 +125,148 @@ function CircularProgress({
 export default function HomeScreen() {
   const router = useRouter();
   const [showNotifications, setShowNotifications] = useState(false);
-  const [medications, setMedications] = useState<Medication[]>([]);
-  const [todaysMedications, setTodaysMedications] = useState<Medication[]>([]);
+  const [todaysMedications, setTodaysMedications] = useState([]);
   const [completedDoses, setCompletedDoses] = useState(0);
-  const [doseHistory, setDoseHistory] = useState<DoseHistory[]>([]);
-
-  const loadMedications = useCallback(async () => {
+  
+  // Use Zustand stores
+  const { medications, fetchMedications } = useMedicationStore();
+  const { doseHistory, fetchDoseHistory, getTodaysDoses, recordDose } = useDoseHistoryStore();
+  
+  const loadData = useCallback(async () => {
     try {
-      const [allMedications, todaysDoses] = await Promise.all([
-        getMedications(),
-        getTodaysDoses(),
-      ]);
-
-      setDoseHistory(todaysDoses);
-      setMedications(allMedications);
-
+      await Promise.all([fetchMedications(), fetchDoseHistory()]);
+      
       // Filter medications for today
       const today = new Date();
-      const todayMeds = allMedications.filter((med) => {
+      const todayMeds = medications.filter((med) => {
         const startDate = new Date(med.startDate);
-        const durationDays = parseInt(med.duration.split(" ")[0]);
-
+        const durationValue = med.duration === "Ongoing" ? -1 : 
+          parseInt(med.duration.split(" ")[0]);
+        
         // For ongoing medications or if within duration
         if (
-          durationDays === -1 ||
+          durationValue === -1 ||
           (today >= startDate &&
             today <=
               new Date(
-                startDate.getTime() + durationDays * 24 * 60 * 60 * 1000
+                startDate.getTime() + durationValue * 24 * 60 * 60 * 1000
               ))
         ) {
           return true;
         }
         return false;
       });
-
-      setTodaysMedications(todayMeds);
-
+      
+      // Expand medications to show each time slot
+      const expandedMeds = [];
+      todayMeds.forEach(med => {
+        if (med.frequency === "As needed") {
+          expandedMeds.push({...med, displayTime: "As needed"});
+        } else {
+          // Create an entry for each time
+          med.times.forEach(time => {
+            expandedMeds.push({
+              ...med,
+              displayTime: time,
+              timeKey: `${med.id}-${time}` // Unique key for each time slot
+            });
+          });
+        }
+      });
+      
+      setTodaysMedications(expandedMeds);
+      
       // Calculate completed doses
+      const todaysDoses = getTodaysDoses();
       const completed = todaysDoses.filter((dose) => dose.taken).length;
       setCompletedDoses(completed);
     } catch (error) {
-      console.error("Error loading medications:", error);
+      console.error("Error loading data:", error);
     }
-  }, []);
-
+  }, [fetchMedications, fetchDoseHistory, medications, getTodaysDoses]);
+  
   const setupNotifications = async () => {
     try {
       const token = await registerForPushNotificationsAsync();
       if (!token) {
         console.log("Failed to get push notification token");
-        return;
-      }
-
-      // Schedule reminders for all medications
-      const medications = await getMedications();
-      for (const medication of medications) {
-        if (medication.reminderEnabled) {
-          await scheduleMedicationReminder(medication);
-        }
       }
     } catch (error) {
       console.error("Error setting up notifications:", error);
     }
   };
-
+  
   // Use useEffect for initial load
   useEffect(() => {
-    loadMedications();
+    loadData();
     setupNotifications();
-
+    
     // Handle app state changes for notifications
     const subscription = AppState.addEventListener("change", (nextAppState) => {
       if (nextAppState === "active") {
-        loadMedications();
+        loadData();
       }
     });
-
+    
     return () => {
       subscription.remove();
     };
   }, []);
-
+  
   // Use useFocusEffect for subsequent updates
   useFocusEffect(
     useCallback(() => {
-      const unsubscribe = () => {
-        // Cleanup if needed
-      };
-
-      loadMedications();
-      return () => unsubscribe();
-    }, [loadMedications])
+      loadData();
+      return () => {};
+    }, [loadData])
   );
-
-  const handleTakeDose = async (medication: Medication) => {
+  
+  const handleTakeDose = async (medication) => {
     try {
-      await recordDose(medication.id, true, new Date().toISOString());
-      await loadMedications(); // Reload data after recording dose
+      await recordDose(
+        medication.id, 
+        true, 
+        new Date().toISOString(),
+        medication.displayTime // Pass the scheduled time
+      );
+      
+      // Show confirmation
+      Alert.alert(
+        "Dose Recorded",
+        `You've taken ${medication.name} at ${medication.displayTime}`,
+        [{ text: "OK" }]
+      );
+      
+      await loadData(); // Reload data after recording dose
     } catch (error) {
       console.error("Error recording dose:", error);
       Alert.alert("Error", "Failed to record dose. Please try again.");
     }
   };
-
-  const isDoseTaken = (medicationId: string) => {
-    return doseHistory.some(
-      (dose) => dose.medicationId === medicationId && dose.taken
+  
+  const isDoseTaken = (medicationId, scheduledTime) => {
+    const todaysDoses = getTodaysDoses();
+    return todaysDoses.some(
+      (dose) => 
+        dose.medicationId === medicationId && 
+        dose.taken && 
+        dose.scheduledTime === scheduledTime
     );
   };
-
+  
   const progress =
     todaysMedications.length > 0
       ? completedDoses / (todaysMedications.length * 2)
       : 0;
+
+  const debugNotifications = async () => {
+    try {
+      await listAllScheduledNotifications();
+      Alert.alert("Debug", "Check console logs for notification details");
+    } catch (error) {
+      console.error("Error debugging notifications:", error);
+    }
+  };
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
@@ -327,7 +347,7 @@ export default function HomeScreen() {
             </View>
           ) : (
             todaysMedications.map((medication) => {
-              const taken = isDoseTaken(medication.id);
+              const taken = isDoseTaken(medication.id, medication.displayTime);
               return (
                 <View key={medication.id} style={styles.doseCard}>
                   <View
@@ -349,7 +369,7 @@ export default function HomeScreen() {
                     </View>
                     <View style={styles.doseTime}>
                       <Ionicons name="time-outline" size={16} color="#666" />
-                      <Text style={styles.timeText}>{medication.times[0]}</Text>
+                      <Text style={styles.timeText}>{medication.displayTime}</Text>
                     </View>
                   </View>
                   {taken ? (
@@ -409,7 +429,7 @@ export default function HomeScreen() {
                     {medication.dosage}
                   </Text>
                   <Text style={styles.notificationTime}>
-                    {medication.times[0]}
+                    {medication.displayTime}
                   </Text>
                 </View>
               </View>
@@ -417,6 +437,13 @@ export default function HomeScreen() {
           </View>
         </View>
       </Modal>
+
+      <TouchableOpacity 
+        style={styles.debugButton} 
+        onPress={debugNotifications}
+      >
+        <Text style={styles.debugButtonText}>Debug Notifications</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -720,5 +747,16 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     fontSize: 14,
     marginLeft: 4,
+  },
+  debugButton: {
+    backgroundColor: "#666",
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 15,
+    marginTop: 10,
+  },
+  debugButtonText: {
+    color: "white",
+    fontSize: 12,
   },
 });

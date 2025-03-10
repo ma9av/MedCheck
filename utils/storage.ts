@@ -20,10 +20,10 @@ export interface Medication {
 }
 
 export interface DoseHistory {
-  id: string;
   medicationId: string;
-  timestamp: string;
   taken: boolean;
+  timestamp: string;
+  scheduledTime?: string;
 }
 
 export async function getMedications(): Promise<Medication[]> {

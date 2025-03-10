@@ -17,7 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
-import { addMedication } from "../../utils/storage";
+import { useMedicationStore } from "../../utils/stores/medicationStore";
 import {
   scheduleMedicationReminder,
   scheduleRefillReminder,
@@ -63,13 +63,14 @@ const DURATIONS = [
 
 export default function AddMedicationScreen() {
   const router = useRouter();
+  const { addMedication } = useMedicationStore();
   const [form, setForm] = useState({
     name: "",
     dosage: "",
     frequency: "",
     duration: "",
     startDate: new Date(),
-    times: ["09:00"],
+    times: [],
     notes: "",
     reminderEnabled: true,
     refillReminder: false,
@@ -83,6 +84,7 @@ export default function AddMedicationScreen() {
   const [selectedFrequency, setSelectedFrequency] = useState("");
   const [selectedDuration, setSelectedDuration] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedTimeIndex, setSelectedTimeIndex] = useState(0);
 
   const validateForm = () => {
     const newErrors: { [key: string]: string } = {};
@@ -142,6 +144,7 @@ export default function AddMedicationScreen() {
         refillAt: form.refillAt ? Number(form.refillAt) : 0,
         startDate: form.startDate.toISOString(),
         color: randomColor,
+        times: [...form.times],
       };
 
       await addMedication(medicationData);
@@ -181,11 +184,13 @@ export default function AddMedicationScreen() {
   const handleFrequencySelect = (freq: string) => {
     setSelectedFrequency(freq);
     const selectedFreq = FREQUENCIES.find((f) => f.label === freq);
-    setForm((prev) => ({
-      ...prev,
-      frequency: freq,
-      times: selectedFreq?.times || [],
-    }));
+    if (selectedFreq) {
+      setForm((prev) => ({
+        ...prev,
+        frequency: freq,
+        times: [...selectedFreq.times],
+      }));
+    }
     if (errors.frequency) {
       setErrors((prev) => ({ ...prev, frequency: "" }));
     }
@@ -193,7 +198,13 @@ export default function AddMedicationScreen() {
 
   const handleDurationSelect = (dur: string) => {
     setSelectedDuration(dur);
-    setForm((prev) => ({ ...prev, duration: dur }));
+    const selectedDur = DURATIONS.find((d) => d.label === dur);
+    if (selectedDur) {
+      setForm((prev) => ({ 
+        ...prev, 
+        duration: dur 
+      }));
+    }
     if (errors.duration) {
       setErrors((prev) => ({ ...prev, duration: "" }));
     }
@@ -209,10 +220,7 @@ export default function AddMedicationScreen() {
               styles.optionCard,
               selectedFrequency === freq.label && styles.selectedOptionCard,
             ]}
-            onPress={() => {
-              setSelectedFrequency(freq.label);
-              setForm({ ...form, frequency: freq.label });
-            }}
+            onPress={() => handleFrequencySelect(freq.label)}
           >
             <View
               style={[
@@ -250,10 +258,7 @@ export default function AddMedicationScreen() {
               styles.optionCard,
               selectedDuration === dur.label && styles.selectedOptionCard,
             ]}
-            onPress={() => {
-              setSelectedDuration(dur.label);
-              setForm({ ...form, duration: dur.label });
-            }}
+            onPress={() => handleDurationSelect(dur.label)}
           >
             <Text
               style={[
@@ -386,6 +391,7 @@ export default function AddMedicationScreen() {
                     key={index}
                     style={styles.timeButton}
                     onPress={() => {
+                      setSelectedTimeIndex(index);
                       setShowTimePicker(true);
                     }}
                   >
@@ -402,7 +408,7 @@ export default function AddMedicationScreen() {
             {showTimePicker && (
               <DateTimePicker
                 value={(() => {
-                  const [hours, minutes] = form.times[0].split(":").map(Number);
+                  const [hours, minutes] = form.times[selectedTimeIndex].split(":").map(Number);
                   const date = new Date();
                   date.setHours(hours, minutes, 0, 0);
                   return date;
@@ -418,7 +424,7 @@ export default function AddMedicationScreen() {
                     });
                     setForm((prev) => ({
                       ...prev,
-                      times: prev.times.map((t, i) => (i === 0 ? newTime : t)),
+                      times: prev.times.map((t, i) => (i === selectedTimeIndex ? newTime : t)),
                     }));
                   }
                 }}
